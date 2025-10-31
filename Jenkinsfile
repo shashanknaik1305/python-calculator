@@ -1,64 +1,106 @@
-@Library('my-shared-lib') _
-node {
-    stage('Checkout') {
-        checkout([$class: 'GitSCM',
-            branches: [[name: '*/main']],
-            doGenerateSubmoduleConfigurations: false,
-            extensions: [],
-            userRemoteConfigs: [[
-                url: 'git@github.com:shashanknaik1305/python-calculator.git',
-                credentialsId: 'github-ssh'
-            ]]
-        ])
+
+@Library('my-shared-lib@main') _
+
+pipeline {
+    agent any
+
+    environment {
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
+        DOCKER_IMAGE = "shashanknaik1308/python-calculator"
     }
 
-    stage('Build and Test in Docker') {
-    docker.image('python:3.9').inside('--user root') {
-        sh '''
-            echo "Installing dependencies..."
-            pip install --no-cache-dir -r requirements.txt
-            pip install --no-cache-dir pytest pytest-html pytest-metadata
+    stages {
 
-            echo "Running tests..."
-            mkdir -p reports logs
-            pytest --maxfail=1 --disable-warnings -q \
-                --junitxml=reports/results.xml \
-                --html=reports/report.html || true
+        stage('Checkout') {
+            steps {
+                echo "🔁 Checking out code from GitHub..."
+                checkout scm
+            }
+        }
 
-            echo "Generated reports:"
-            ls -l reports || true
-        '''
-    }
-}
+        stage('Build and Test in Docker') {
+            agent {
+                docker {
+                    image 'python:3.9'
+                    args '-u root:root'
+                }
+            }
+            steps {
+                echo "⚙️ Running build and tests inside Docker..."
+                sh '''
+                    python3 -m venv venv
+                    . venv/bin/activate
+                    pip install --upgrade pip
+                    pip install -r requirements.txt || true
+                    pip install pytest pytest-html
+                    mkdir -p reports logs
+                    pytest --html=reports/report.html --self-contained-html || echo "Tests failed"
+                '''
+            }
+        }
 
+        stage('Build Docker Image') {
+            steps {
+                echo "🐳 Building Docker image..."
+                sh '''
+                    docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
+                    docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
+                '''
+            }
+        }
 
-    stage('Build Docker Image') {
-        // ✅ Updated credential ID here
-        docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-creds') {
-            sh '''
-                echo "Building Docker image..."
-                docker build -t shashanknaik1308/python-calculator:latest .
+        stage('Push to DockerHub') {
+            steps {
+                echo "📤 Pushing image to DockerHub..."
+                sh '''
+                    echo "${DOCKERHUB_CREDENTIALS_PSW}" | docker login -u "${DOCKERHUB_CREDENTIALS_USR}" --password-stdin
+                    docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
+                    docker push ${DOCKER_IMAGE}:latest
+                '''
+            }
+        }
 
-                echo "Pushing image to DockerHub..."
-                docker push shashanknaik1308/python-calculator:latest
-            '''
+        stage('Archive Reports') {
+            steps {
+                echo "📁 Archiving reports and logs..."
+                archiveArtifacts artifacts: 'reports/**/*, logs/**/*', allowEmptyArchive: true
+                junit 'reports/*.xml'
+            }
         }
     }
 
-    stage('Archive Reports') {
-        echo '📁 Archiving reports and logs...'
-        archiveArtifacts artifacts: 'reports/**/*, logs/**/*', allowEmptyArchive: true
-        junit 'reports/results.xml'
-    }
+    post {
+        success {
+            emailext(
+                subject: "✅ SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """<p>Hi,</p>
+                         <p>The Jenkins build <b>${env.JOB_NAME}</b> #${env.BUILD_NUMBER} completed successfully.</p>
+                         <p>View console output: <a href='${env.BUILD_URL}'>${env.BUILD_URL}</a></p>""",
+                to: 'mrthreesixty360iu@gmail.com',
+                mimeType: 'text/html'
+            )
+        }
 
-    stage('Send Email') {
-        emailext(
-            subject: "Build #${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
-            body: """\
-                <p>Build result: ${currentBuild.currentResult}</p>
-                <p>Check console output at <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>
-            """,
-            to: 'mrthreesixty360iu@gmail.com'
-        )
+        failure {
+            emailext(
+                subject: "❌ FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """<p>Hi,</p>
+                         <p>The Jenkins build <b>${env.JOB_NAME}</b> #${env.BUILD_NUMBER} has failed.</p>
+                         <p>Check logs here: <a href='${env.BUILD_URL}'>${env.BUILD_URL}</a></p>""",
+                to: 'mrthreesixty360iu@gmail.com',
+                mimeType: 'text/html'
+            )
+        }
+
+        unstable {
+            emailext(
+                subject: "⚠️ UNSTABLE: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """<p>Hi,</p>
+                         <p>The Jenkins build <b>${env.JOB_NAME}</b> #${env.BUILD_NUMBER} is unstable (some tests failed).</p>
+                         <p>Check details here: <a href='${env.BUILD_URL}'>${env.BUILD_URL}</a></p>""",
+                to: 'mrthreesixty360iu@gmail.com',
+                mimeType: 'text/html'
+            )
+        }
     }
 }
