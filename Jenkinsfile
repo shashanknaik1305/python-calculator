@@ -13,17 +13,24 @@ node {
     }
 
     stage('Build and Test in Docker') {
-        docker.image('python:3.9').inside('--user root') {
-            sh '''
-                echo "Installing dependencies..."
-                pip install --no-cache-dir -r requirements.txt
+    docker.image('python:3.9').inside('--user root') {
+        sh '''
+            echo "Installing dependencies..."
+            pip install --no-cache-dir -r requirements.txt
+            pip install --no-cache-dir pytest pytest-html pytest-metadata
 
-                echo "Running tests..."
-                mkdir -p reports logs
-                pytest tests/ --junitxml=reports/results.xml --html=reports/report.html || true
-            '''
-        }
+            echo "Running tests..."
+            mkdir -p reports logs
+            pytest --maxfail=1 --disable-warnings -q \
+                --junitxml=reports/results.xml \
+                --html=reports/report.html || true
+
+            echo "Generated reports:"
+            ls -l reports || true
+        '''
     }
+}
+
 
     stage('Build Docker Image') {
         // ✅ Updated credential ID here
