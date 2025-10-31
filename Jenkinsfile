@@ -1,6 +1,5 @@
 @Library('my-shared-lib') _
 node {
-    // Use Docker agent with root user
     stage('Checkout') {
         checkout([$class: 'GitSCM',
             branches: [[name: '*/main']],
@@ -27,7 +26,8 @@ node {
     }
 
     stage('Build Docker Image') {
-        docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-credentials') {
+        // ✅ Updated credential ID here
+        docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-creds') {
             sh '''
                 echo "Building Docker image..."
                 docker build -t shashanknaik1308/python-calculator:latest .
@@ -55,4 +55,3 @@ node {
         )
     }
 }
-
